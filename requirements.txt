@@ -1,0 +1,3 @@
+requests
+hijridate
+PyQt5

@@ -4,8 +4,8 @@ import sys
 import json
 from datetime import datetime, timedelta
 import requests
-from bs4 import BeautifulSoup
-from hijri_converter import convert
+# from bs4 import BeautifulSoup
+from hijridate import convert
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QLabel, QFrame, QGridLayout, QSystemTrayIcon, QMenu, QAction)
 from PyQt5.QtCore import Qt, QTimer
@@ -244,37 +244,43 @@ class MainWindow(QMainWindow):
     def convert_to_24h(self, time_str):
         return datetime.strptime(time_str, '%I:%M %p').strftime('%H:%M')
 
-    def get_prayer_times(self, url):
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+    def get_prayer_times(self, url=None):
+        if url is None:
+            url = "https://api.aladhan.com/v1/timingsByCity?city=Mostaganem&country=Algeria&method=19"
 
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
+            data = response.json()
 
-            soup = BeautifulSoup(response.text, 'html.parser')
-            prayer_times_table = soup.find('table', class_='ptm_table')
-            prayer_times_row = prayer_times_table.find('tbody').find('tr')
+            if data.get("code") == 200:
+                timings = data["data"]["timings"]
+                prayer_times = {}
+                for label in ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+                    time_24h = timings[label]
+                    # Convert to 12h format for compatibility if needed, though we primarily use 24h
+                    time_12h = datetime.strptime(time_24h, "%H:%M").strftime("%I:%M %p")
+                    prayer_times[label] = {'12h': time_12h, '24h': time_24h}
+                return prayer_times
+            else:
+                raise Exception(f"API Error: {data.get('status')}")
 
-            prayer_times = {}
-            for label in ["Fajr", "Sunrise", "Dhuhr", "Asr", "Maghrib", "Isha"]:
-                time_12h = prayer_times_row.find('td', {'data-label': label}).text.strip()
-                time_24h = self.convert_to_24h(time_12h)
-                prayer_times[label] = {'12h': time_12h, '24h': time_24h}
-
-            return prayer_times
-        except requests.RequestException:
-            print('No internet connection. Loading data from the local file.')
+        except Exception as e:
+            print(f'Error fetching prayer times: {e}. Loading data from the local file.')
             try:
                 with open('src/data/data.json', 'r') as f:
                     data = json.load(f)
-                    prayer_times = data["prayer_times"][list(data["prayer_times"].keys())[0]]
+                    p_times = data.get("prayer_times", {})
+                    keys = list(p_times.keys())
+                    if keys:
+                        # Return the most recent entry if available
+                        return p_times[keys[-1]]
+                    else:
+                        print('No local prayer data available.')
+                        return {}
             except (FileNotFoundError, json.JSONDecodeError):
-                print('Feild to Load Prayer Time, File Not Found')
+                print('Failed to Load Prayer Time, File Not Found or Invalid')
                 return {}
-
-            return prayer_times
 
     def save_prayer_times(self, prayer_times):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -296,21 +302,32 @@ class MainWindow(QMainWindow):
 
     def update_prayer_times(self):
         today = datetime.now().strftime("%Y-%m-%d")
+        prayer_times = {}
         try:
-            with open('src/data/data.json', 'r') as f:
-                data = json.load(f)
-            if today in data["prayer_times"]:
-                prayer_times = data["prayer_times"][today]
+            # Try to load existing data from file first
+            try:
+                with open('src/data/data.json', 'r') as f:
+                    data = json.load(f)
+                if today in data.get("prayer_times", {}):
+                    prayer_times = data["prayer_times"][today]
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+
+            # If not found for today, fetch from API
+            if not prayer_times:
+                prayer_times = self.get_prayer_times()
+                if prayer_times:
+                    self.save_prayer_times(prayer_times)
+
+        except Exception as e:
+            print(f'Error updating prayer times: {e}')
+
+        # Update displays
+        for prayer, display in self.prayer_displays.items():
+            if prayer in prayer_times:
+                display.setText(prayer_times[prayer]['24h'])
             else:
-                url = "https://www.urdupoint.com/islam/mostaganem-prayer-timings.html"
-                prayer_times = self.get_prayer_times(url)
-                self.save_prayer_times(prayer_times)
-
-        except (FileNotFoundError, json.JSONDecodeError):
-            print('Feild to Load Prayer Time, File Not Found')
-
-        for prayer, times in prayer_times.items():
-            self.prayer_displays[prayer].setText(times['24h'])
+                display.setText("--:--")
 
         self.update_prayer_summary()
 
@@ -433,7 +450,7 @@ class MainWindow(QMainWindow):
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={api_key}"
 
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 weather_data = response.json()
                 temperature = weather_data['main']['temp'] - 273.15
@@ -443,9 +460,9 @@ class MainWindow(QMainWindow):
                 }
                 with open('src/data/data.json', 'w') as f:
                     json.dump(data, f, indent=2)
-                return temperature
+                return round(temperature, 1)
         except requests.RequestException:
-            print('Feild to Load Weather, File not found')
+            print('Failed to Load Weather')
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
