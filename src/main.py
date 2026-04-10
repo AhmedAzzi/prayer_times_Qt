@@ -26,7 +26,7 @@ class DigitalDisplay(QLabel):
         }
         """)
         self.setAlignment(Qt.AlignCenter)
-        self.setFont(QFont("Digital-7", 30))
+        self.setFont(QFont("Digital-7", 26))
         self.setMinimumHeight(30)
 
 class PrayerNameLabel(QLabel):
@@ -234,7 +234,7 @@ class MainWindow(QMainWindow):
 
         self.time_display.setText(now.strftime("%H:%M:%S"))
         self.temp_display.setText(f"{self.get_weather()}°C")
-        self.remainder_display.setFont(QFont("Digital-7", 20))
+        self.remainder_display.setFont(QFont("Digital-7", 14))
         self.remainder_display.setText(self.get_next_prayer(now))
 
     def toggle_date_display(self):
